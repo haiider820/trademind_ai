@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:trademind_ai/core/config/app_config.dart';
+import 'package:trademind_ai/features/admin/admin_dashboard_screen.dart';
 import 'package:trademind_ai/features/education/admin_lesson_editor_screen.dart';
 import 'package:trademind_ai/providers/app_providers.dart';
 import 'package:trademind_ai/providers/auth_provider.dart';
@@ -46,6 +47,17 @@ class ProfileScreen extends ConsumerWidget {
                       );
                     },
                     child: const Text('Create Lesson'),
+                  ),
+                  const SizedBox(height: 8),
+                  FilledButton.tonal(
+                    onPressed: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => const AdminDashboardScreen(),
+                        ),
+                      );
+                    },
+                    child: const Text('Open Admin Dashboard'),
                   ),
                 ],
               ),

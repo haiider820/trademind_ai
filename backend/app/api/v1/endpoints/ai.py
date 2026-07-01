@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+import json
+import time
 from typing import Any
 import re
 
@@ -8,6 +11,7 @@ from pydantic import BaseModel, Field
 
 from app.api.deps import get_current_user
 from app.services.binance_service import BinanceService
+from app.services.scanner_service import ScannerService
 from app.services.market_data_service import MarketDataService
 from app.services.gemini_service import GeminiService
 
@@ -15,6 +19,12 @@ router = APIRouter(tags=["ai"])
 gemini_service = GeminiService()
 binance_service = BinanceService()
 market_data_service = MarketDataService()
+scanner_service = ScannerService()
+_RATE_LIMIT_WINDOW_SECONDS = 60
+_RATE_LIMIT_MAX_REQUESTS = 12
+_rate_limit_state: dict[str, tuple[float, int]] = {}
+_context_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+_CONTEXT_CACHE_TTL_SECONDS = 45
 
 
 class AIChatRequest(BaseModel):
@@ -108,23 +118,100 @@ def _extract_crypto_symbol(text: str) -> str | None:
     return None
 
 
-async def _build_live_context(request: AIChatRequest) -> str:
-    parts: list[str] = []
+async def _enforce_ai_rate_limit(user_id: str) -> None:
+    now = time.monotonic()
+    window_start, count = _rate_limit_state.get(user_id, (now, 0))
+    if now - window_start >= _RATE_LIMIT_WINDOW_SECONDS:
+        window_start, count = now, 0
+    if count >= _RATE_LIMIT_MAX_REQUESTS:
+        raise HTTPException(status_code=429, detail="AI rate limit exceeded. Please try again later.")
+    _rate_limit_state[user_id] = (window_start, count + 1)
 
+
+async def _ensure_chat_session(user_id: str) -> str:
+    service = SupabaseService()
+    rows = await service.select(
+        "chat_sessions",
+        query=f"user_id=eq.{user_id}&select=id&order=updated_at.desc&limit=1",
+        use_service_key=True,
+    )
+    if rows:
+        return str(rows[0]["id"])
+    row = await service.insert(
+        "chat_sessions",
+        payload={"user_id": user_id, "title": "TradeMind Chat"},
+        use_service_key=True,
+    )
+    return str(row["id"])
+
+
+async def _log_chat_message(user_id: str, session_id: str, role: str, content: str) -> None:
+    service = SupabaseService()
+    await service.insert(
+        "chat_messages",
+        payload={
+            "session_id": session_id,
+            "user_id": user_id,
+            "role": role,
+            "content": content,
+        },
+        use_service_key=True,
+    )
+
+
+async def _build_live_context(request: AIChatRequest) -> str:
     symbol = (request.symbol or "BTCUSDT").upper()
     market = (request.market or "crypto").lower()
+    question = request.get_text().lower()
+    educational_only = any(
+        phrase in question
+        for phrase in [
+            "what is ",
+            "explain ",
+            "define ",
+            "how does ",
+            "difference between",
+            "what does ",
+        ]
+    )
+
+    if educational_only and not request.symbol:
+        return ""
+
+    parts: list[str] = []
+    cache_key = f"{market}:{symbol}"
+    cached = _context_cache.get(cache_key)
+    now = time.monotonic()
+    if cached and now - cached[0] <= _CONTEXT_CACHE_TTL_SECONDS:
+        return json.dumps(cached[1], separators=(",", ":"))
 
     try:
         if market == "crypto":
-            price = await binance_service.get_price(symbol)
-            ticker = await binance_service.get_ticker_24h(symbol)
-            parts.append(
-                f"Live crypto data: {symbol} price={price:.2f}, "
-                f"24h change={ticker['price_change_percent']:.2f}%, "
-                f"high={ticker['high_price']:.2f}, low={ticker['low_price']:.2f}."
+            ticker, scan = await asyncio.gather(
+                binance_service.get_ticker_24h(symbol),
+                scanner_service.scan_symbol(symbol, interval=request.timeframe or "1h"),
             )
+            payload = {
+                "symbol": symbol,
+                "market": market,
+                "price": ticker["last_price"],
+                "24h_change_percent": ticker["price_change_percent"],
+                "high_24h": ticker["high_price"],
+                "low_24h": ticker["low_price"],
+                "volume_24h": ticker["volume"],
+                "fear_greed": None,
+                "trend": scan.trend,
+                "strength": scan.strength,
+                "rsi": scan.rsi,
+                "ema_fast": scan.ema_fast,
+                "ema_slow": scan.ema_slow,
+                "macd": scan.macd,
+                "last_price": scan.last_price,
+            }
+            _context_cache[cache_key] = (now, payload)
+            return json.dumps(payload, separators=(",", ":"))
         else:
-            parts.append(f"User is asking about forex symbol/pair: {symbol}.")
+            return json.dumps({"symbol": symbol, "market": market, "question_type": "forex"}, separators=(",", ":"))
     except Exception as exc:
         parts.append(f"Live price lookup failed for {symbol}: {exc}")
 
@@ -144,9 +231,13 @@ async def _build_live_context(request: AIChatRequest) -> str:
 
 @router.post("/chat")
 async def chat(request: AIChatRequest, current_user: dict = Depends(get_current_user)) -> dict:
+    await _enforce_ai_rate_limit(current_user.id)
     user_text = request.get_text()
     if not user_text:
         raise HTTPException(status_code=400, detail="Message is required")
+
+    session_id = await _ensure_chat_session(current_user.id)
+    await _log_chat_message(current_user.id, session_id, "user", user_text)
 
     live_context = await _build_live_context(request)
     detected_symbol = _extract_crypto_symbol(user_text)
@@ -155,12 +246,15 @@ async def chat(request: AIChatRequest, current_user: dict = Depends(get_current_
         try:
             symbol = detected_symbol or (request.symbol or "BTCUSDT").upper()
             price = await binance_service.get_price(symbol)
+            reply_text = f"{symbol} is currently trading at ${price:,.2f} USD."
+            await _log_chat_message(current_user.id, session_id, "assistant", reply_text)
             return {
-                "reply": f"{symbol} is currently trading at ${price:,.2f} USD.",
+                "reply": reply_text,
                 "mode": "market_data",
                 "model": "binance",
                 "symbol": symbol,
                 "price": price,
+                "session_id": session_id,
             }
         except Exception as exc:
             return {
@@ -168,6 +262,7 @@ async def chat(request: AIChatRequest, current_user: dict = Depends(get_current_
                 "mode": "fallback",
                 "model": "fallback",
                 "error": str(exc),
+                "session_id": session_id,
             }
 
     try:
@@ -178,10 +273,12 @@ async def chat(request: AIChatRequest, current_user: dict = Depends(get_current_
                 part for part in [request.context, live_context] if part and part.strip()
             ),
         )
+        await _log_chat_message(current_user.id, session_id, "assistant", reply)
         return {
             "reply": reply,
             "mode": "gemini",
             "model": "gemini",
+            "session_id": session_id,
         }
     except Exception as exc:
         return {
@@ -189,14 +286,19 @@ async def chat(request: AIChatRequest, current_user: dict = Depends(get_current_
             "mode": "fallback",
             "model": "fallback",
             "error": str(exc),
+            "session_id": session_id,
         }
 
 
 @router.post("/analyze")
 async def analyze(request: AIChatRequest, current_user: dict = Depends(get_current_user)) -> dict:
+    await _enforce_ai_rate_limit(current_user.id)
     user_text = request.get_text()
     if not user_text:
         raise HTTPException(status_code=400, detail="Prompt is required")
+
+    session_id = await _ensure_chat_session(current_user.id)
+    await _log_chat_message(current_user.id, session_id, "user", user_text)
 
     try:
         detected_symbol = _extract_crypto_symbol(user_text)
@@ -222,10 +324,12 @@ async def analyze(request: AIChatRequest, current_user: dict = Depends(get_curre
                 if part and part.strip()
             ),
         )
+        await _log_chat_message(current_user.id, session_id, "assistant", reply)
         return {
             "reply": reply,
             "mode": "gemini",
             "model": "gemini",
+            "session_id": session_id,
         }
     except Exception as exc:
         return {
@@ -233,4 +337,5 @@ async def analyze(request: AIChatRequest, current_user: dict = Depends(get_curre
             "mode": "fallback",
             "model": "fallback",
             "error": str(exc),
+            "session_id": session_id,
         }

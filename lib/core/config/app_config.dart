@@ -12,14 +12,23 @@ class AppConfig {
     }
     switch (defaultTargetPlatform) {
       case TargetPlatform.android:
-        return 'http://192.168.100.110:8000/api/v1';
+        if (kDebugMode) {
+          return 'http://192.168.100.110:8000/api/v1';
+        }
+        throw StateError('API_BASE_URL must be provided with --dart-define for Android release builds');
       case TargetPlatform.iOS:
       case TargetPlatform.macOS:
       case TargetPlatform.windows:
       case TargetPlatform.linux:
-        return 'http://localhost:8000/api/v1';
+        if (kDebugMode) {
+          return 'http://localhost:8000/api/v1';
+        }
+        throw StateError('API_BASE_URL must be provided with --dart-define for non-web release builds');
       case TargetPlatform.fuchsia:
-        return 'http://localhost:8000/api/v1';
+        if (kDebugMode) {
+          return 'http://localhost:8000/api/v1';
+        }
+        throw StateError('API_BASE_URL must be provided with --dart-define');
     }
   }
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 
 from app.services.binance_service import BinanceService
@@ -52,29 +53,31 @@ class ScannerService:
 
     async def scan_watchlist(self, symbols: list[str], intervals: list[str] | None = None) -> list[dict]:
         intervals = intervals or ["15m", "1h", "4h"]
-        results: list[dict] = []
-        for symbol in symbols:
-            row: dict[str, object] = {"symbol": symbol.upper(), "timeframes": []}
-            for interval in intervals:
-                try:
-                    result = await self.scan_symbol(symbol, interval=interval)
-                    row["timeframes"].append(
-                        {
-                            "interval": interval,
-                            "trend": result.trend,
-                            "strength": result.strength,
-                            "rsi": result.rsi,
-                            "last_price": result.last_price,
-                        }
-                    )
-                except Exception as exc:
-                    row["timeframes"].append(
-                        {
-                            "interval": interval,
-                            "trend": "error",
-                            "strength": "weak",
-                            "error": str(exc),
-                        }
-                    )
-            results.append(row)
-        return results
+        tasks = [self._scan_symbol_intervals(symbol, intervals) for symbol in symbols]
+        return await asyncio.gather(*tasks)
+
+    async def _scan_symbol_intervals(self, symbol: str, intervals: list[str]) -> dict:
+        row: dict[str, object] = {"symbol": symbol.upper(), "timeframes": []}
+        tasks = [self.scan_symbol(symbol, interval=interval) for interval in intervals]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for interval, result in zip(intervals, results, strict=False):
+            if isinstance(result, Exception):
+                row["timeframes"].append(
+                    {
+                        "interval": interval,
+                        "trend": "error",
+                        "strength": "weak",
+                        "error": str(result),
+                    }
+                )
+                continue
+            row["timeframes"].append(
+                {
+                    "interval": interval,
+                    "trend": result.trend,
+                    "strength": result.strength,
+                    "rsi": result.rsi,
+                    "last_price": result.last_price,
+                }
+            )
+        return row

@@ -51,8 +51,8 @@ class SignalMonitorService:
         service = SupabaseService()
         rows = await service.select(
             "signals",
-            query=(
-                "select=id,pair,trade_type,entry,sl,tp,status,pnl,risk_level,created_at"
+        query=(
+                "select=id,pair,trade_type,entry,sl,tp,tp1,tp2,tp3,tp1_hit,realized_pnl,status,pnl,risk_level,created_at"
                 f"&status=eq.open&limit={self.config.batch_limit}"
             ),
             use_service_key=True,
@@ -60,23 +60,41 @@ class SignalMonitorService:
         if not rows:
             return
 
+        price_map = await self._build_price_map(rows)
         for row in rows:
-            await self._process_signal(service, row)
+            await self._process_signal(service, row, price_map)
 
-    async def _process_signal(self, service: SupabaseService, row: dict[str, Any]) -> None:
+    async def _build_price_map(self, rows: list[dict[str, Any]]) -> dict[str, float]:
+        try:
+            prices = await self._binance.get_all_prices()
+        except Exception:
+            prices = []
+
+        price_map = {item["symbol"].upper(): float(item["price"]) for item in prices if item.get("symbol")}
+        for row in rows:
+            pair = str(row.get("pair", "")).upper()
+            if pair and pair not in price_map:
+                try:
+                    price_map[pair] = await self._binance.get_price(pair)
+                except Exception:
+                    continue
+        return price_map
+
+    async def _process_signal(self, service: SupabaseService, row: dict[str, Any], price_map: dict[str, float]) -> None:
         pair = str(row.get("pair", "")).upper()
         if not pair:
             return
 
-        try:
-            current_price = await self._binance.get_price(pair)
-        except Exception:
+        current_price = price_map.get(pair)
+        if current_price is None:
             return
 
         trade_type = str(row.get("trade_type", "")).lower()
         entry = float(row.get("entry", 0) or 0)
         sl = float(row.get("sl", 0) or 0)
         tp = float(row.get("tp", 0) or 0)
+        tp1 = float(row.get("tp1", 0) or 0)
+        tp1_hit = bool(row.get("tp1_hit", False))
         signal_id = str(row.get("id", ""))
 
         if entry <= 0 or sl <= 0 or tp <= 0 or not signal_id:
@@ -86,8 +104,15 @@ class SignalMonitorService:
         status = self._derive_status(trade_type, current_price, sl, tp)
 
         payload: dict[str, Any] = {"pnl": pnl}
+        if tp1 > 0 and not tp1_hit:
+            if self._tp_hit(trade_type, current_price, tp1):
+                payload["tp1_hit"] = True
+                payload["sl"] = entry
         if status != "open":
             payload["status"] = status
+            payload["realized_pnl"] = pnl
+        elif payload.get("tp1_hit"):
+            payload["status"] = "open"
 
         updated = await service.update(
             "signals",
@@ -121,6 +146,12 @@ class SignalMonitorService:
         if price <= sl:
             return "sl_hit"
         return "open"
+
+    @staticmethod
+    def _tp_hit(trade_type: str, price: float, target: float) -> bool:
+        if trade_type == "short":
+            return price <= target
+        return price >= target
 
     async def _send_status_notification(
         self,

@@ -2,13 +2,16 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:trademind_ai/features/ai_chat/ai_chat_screen.dart';
+import 'package:trademind_ai/features/liquidations/liquidations_screen.dart';
 import 'package:trademind_ai/features/education/learn_trading_screen.dart';
 import 'package:trademind_ai/features/market/crypto_market_screen.dart';
 import 'package:trademind_ai/features/news/news_screen.dart';
 import 'package:trademind_ai/features/profile/profile_screen.dart';
+import 'package:trademind_ai/features/notifications/notifications_screen.dart';
 import 'package:trademind_ai/features/ratio/long_short_ratio_screen.dart';
 import 'package:trademind_ai/features/scanner/scanner_screen.dart';
 import 'package:trademind_ai/features/signals/signals_screen.dart';
+import 'package:trademind_ai/features/whales/whale_tracking_screen.dart';
 
 class TradingShell extends StatefulWidget {
   const TradingShell({super.key});
@@ -126,6 +129,30 @@ class _DiscoverHub extends StatelessWidget {
                 icon: Icons.compare_arrows_outlined,
                 onTap: () => Navigator.of(context).push(
                   MaterialPageRoute<void>(builder: (_) => const LongShortRatioScreen()),
+                ),
+              ),
+              _DiscoverSectionCard(
+                title: 'Notifications',
+                subtitle: 'In-app alerts',
+                icon: Icons.notifications_outlined,
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(builder: (_) => const NotificationsScreen()),
+                ),
+              ),
+              _DiscoverSectionCard(
+                title: 'Whales',
+                subtitle: 'Large transfers',
+                icon: Icons.water_outlined,
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(builder: (_) => const WhaleTrackingScreen()),
+                ),
+              ),
+              _DiscoverSectionCard(
+                title: 'Liquidations',
+                subtitle: 'Leverage flushes',
+                icon: Icons.warning_amber_outlined,
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(builder: (_) => const LiquidationsScreen()),
                 ),
               ),
             ],

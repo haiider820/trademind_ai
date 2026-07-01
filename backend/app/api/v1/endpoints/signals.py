@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from statistics import mean
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.api.deps import AuthUser, get_current_user, require_admin
@@ -26,8 +29,35 @@ async def list_signals(
     return {"success": True, "data": rows}
 
 
+@router.get("/stats")
+async def signals_stats(_: AuthUser = Depends(get_current_user)) -> dict:
+    service = SupabaseService()
+    rows = await service.select(
+        "signals",
+        query="select=id,pair,trade_type,entry,sl,tp,status,pnl,realized_pnl,risk_level,created_at&order=created_at.desc&limit=1000",
+        use_service_key=True,
+    )
+    closed = [row for row in rows if str(row.get("status", "")).lower() in {"tp_hit", "sl_hit", "closed"}]
+    wins = [row for row in closed if str(row.get("status", "")).lower() == "tp_hit"]
+    losses = [row for row in closed if str(row.get("status", "")).lower() == "sl_hit"]
+    pnls = [float(row.get("realized_pnl", row.get("pnl", 0)) or 0) for row in closed]
+    return {
+        "success": True,
+        "data": {
+            "total_signals": len(rows),
+            "open_signals": sum(1 for row in rows if str(row.get("status", "")).lower() == "open"),
+            "closed_signals": len(closed),
+            "win_rate": round((len(wins) / len(closed)) * 100, 2) if closed else 0.0,
+            "loss_rate": round((len(losses) / len(closed)) * 100, 2) if closed else 0.0,
+            "average_pnl": round(mean(pnls), 2) if pnls else 0.0,
+            "best_pnl": round(max(pnls), 2) if pnls else 0.0,
+            "worst_pnl": round(min(pnls), 2) if pnls else 0.0,
+        },
+    }
+
+
 @router.get("/{signal_id}")
-async def get_signal(signal_id: str, _: AuthUser = Depends(get_current_user)) -> dict:
+async def get_signal(signal_id: UUID, _: AuthUser = Depends(get_current_user)) -> dict:
     service = SupabaseService()
     rows = await service.select(
         "signals",
@@ -54,15 +84,20 @@ async def create_signal(payload: SignalCreate, admin: AuthUser = Depends(require
                 "entry": payload.entry,
                 "sl": payload.sl,
                 "tp": payload.tp,
+                "tp1": payload.tp1,
+                "tp2": payload.tp2,
+                "tp3": payload.tp3,
                 "status": "open",
                 "pnl": 0.0,
+                "realized_pnl": 0.0,
+                "tp1_hit": False,
                 "risk_level": payload.risk_level,
                 "created_by": admin.id,
             },
             use_service_key=True,
         )
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Unable to create signal: {exc}") from exc
+        raise HTTPException(status_code=500, detail="Unable to create signal") from exc
 
     try:
         await _broadcast_signal_notification(
@@ -79,7 +114,7 @@ async def create_signal(payload: SignalCreate, admin: AuthUser = Depends(require
 
 @router.patch("/{signal_id}")
 async def update_signal(
-    signal_id: str,
+    signal_id: UUID,
     payload: SignalUpdate,
     _: AuthUser = Depends(require_admin),
 ) -> dict:
@@ -98,7 +133,7 @@ async def update_signal(
             use_service_key=True,
         )
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Unable to update signal: {exc}") from exc
+        raise HTTPException(status_code=500, detail="Unable to update signal") from exc
     if not row:
         raise HTTPException(status_code=404, detail="Signal not found")
 
@@ -130,6 +165,27 @@ async def _broadcast_signal_notification(
     except Exception:
         return
     tokens = [r.get("token", "") for r in rows if r.get("token")]
+    try:
+        signal_rows = await service.select(
+            "signals",
+            query=f"select=created_by&id=eq.{data.get('signal_id', '')}&limit=1",
+            use_service_key=True,
+        )
+        owner_id = signal_rows[0].get("created_by") if signal_rows else None
+        if owner_id:
+            await service.insert(
+                "notifications",
+                payload={
+                    "user_id": owner_id,
+                    "title": title,
+                    "body": body,
+                    "type": data.get("type", "signal"),
+                    "data": data,
+                },
+                use_service_key=True,
+            )
+    except Exception:
+        pass
     try:
         notification_service.send_signal_alert(tokens=tokens, title=title, body=body, data=data)
     except Exception:

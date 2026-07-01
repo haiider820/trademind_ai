@@ -1,1 +1,0 @@
-PS D:\My Projects\crypto\backend> uvicorn app.main:app --reload

@@ -15,8 +15,6 @@ def _gemini_api_key() -> str:
     return (
         settings.gemini_api_key
         or os.getenv("GEMINI_API_KEY")
-        or os.getenv("genmeni_key")
-        or os.getenv("GENMENI_KEY")
         or ""
     ).strip()
 

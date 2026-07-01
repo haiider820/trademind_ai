@@ -17,6 +17,9 @@ class SignalCreate(BaseModel):
     entry: float
     sl: float
     tp: float
+    tp1: float | None = None
+    tp2: float | None = None
+    tp3: float | None = None
     risk_level: RiskLevel = Field(alias="riskLevel")
 
 
@@ -26,8 +29,13 @@ class SignalUpdate(BaseModel):
     entry: float | None = None
     sl: float | None = None
     tp: float | None = None
+    tp1: float | None = None
+    tp2: float | None = None
+    tp3: float | None = None
     status: SignalStatus | None = None
     pnl: float | None = None
+    realized_pnl: float | None = None
+    tp1_hit: bool | None = None
 
 
 class SignalOut(BaseModel):

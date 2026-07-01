@@ -85,6 +85,66 @@ class TrademindApiService {
     return const [];
   }
 
+  Future<List<dynamic>> getWhales() async {
+    final response = await _apiClient.get('/whales');
+    final data = response.data;
+    if (data is Map && data['data'] is List) {
+      return List<dynamic>.from(data['data'] as List);
+    }
+    if (data is List) {
+      return data;
+    }
+    return const [];
+  }
+
+  Future<List<dynamic>> getLiquidations() async {
+    final response = await _apiClient.get('/liquidations');
+    final data = response.data;
+    if (data is Map && data['data'] is List) {
+      return List<dynamic>.from(data['data'] as List);
+    }
+    if (data is List) {
+      return data;
+    }
+    return const [];
+  }
+
+  Future<List<dynamic>> getNotifications() async {
+    final response = await _apiClient.get('/notifications');
+    final data = response.data;
+    if (data is Map && data['data'] is List) {
+      return List<dynamic>.from(data['data'] as List);
+    }
+    if (data is List) {
+      return data;
+    }
+    return const [];
+  }
+
+  Future<List<dynamic>> getWatchlist() async {
+    final response = await _apiClient.get('/watchlists');
+    final data = response.data;
+    if (data is Map && data['data'] is List) {
+      return List<dynamic>.from(data['data'] as List);
+    }
+    if (data is List) {
+      return data;
+    }
+    return const [];
+  }
+
+  Future<List<dynamic>> getLessonProgress() async {
+    final response = await _apiClient.get('/lessons/progress');
+    final data = response.data;
+    if (data is Map && data['data'] is List) {
+      return List<dynamic>.from(data['data'] as List);
+    }
+    if (data is List) {
+      return data;
+    }
+    return const [];
+  }
+
   Future<Map<String, dynamic>> createSignal(Map<String, dynamic> payload) async {
     final response = await _apiClient.post('/signals', data: payload);
     return Map<String, dynamic>.from(response.data as Map);

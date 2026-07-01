@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:trademind_ai/services/trademind_api_service.dart';
 
 class LearnTradingScreen extends StatelessWidget {
   const LearnTradingScreen({super.key});
@@ -40,6 +41,17 @@ class LearnTradingScreen extends StatelessWidget {
               const Text(
                 'Lessons added by admin will appear here automatically.',
                 style: TextStyle(color: Colors.white70),
+              ),
+              const SizedBox(height: 12),
+              FutureBuilder<List<dynamic>>(
+                future: TrademindApiService().getLessonProgress(),
+                builder: (context, progressSnapshot) {
+                  final completed = progressSnapshot.data?.where((row) => row is Map && (row['completed_at'] != null)).length ?? 0;
+                  return Text(
+                    'Completed lessons: $completed',
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+                  );
+                },
               ),
               const SizedBox(height: 16),
               ...grouped.entries.expand(
@@ -90,7 +102,7 @@ class _LessonCard extends StatelessWidget {
       borderRadius: BorderRadius.circular(18),
       child: InkWell(
         borderRadius: BorderRadius.circular(18),
-        onTap: () {},
+        onTap: () => _openDetails(context),
         child: Padding(
           padding: const EdgeInsets.all(14),
           child: Row(
@@ -145,6 +157,47 @@ class _LessonCard extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+
+  Future<void> _openDetails(BuildContext context) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (context) {
+        final title = lesson['title'] as String? ?? 'Untitled lesson';
+        final description = lesson['description'] as String? ?? '';
+        final videoUrl = lesson['video_url'] as String?;
+        final thumbnail = lesson['thumbnail'] as String?;
+        return Padding(
+          padding: EdgeInsets.only(
+            left: 16,
+            right: 16,
+            bottom: MediaQuery.of(context).viewInsets.bottom + 16,
+            top: 8,
+          ),
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (thumbnail != null && thumbnail.isNotEmpty)
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(18),
+                    child: Image.network(thumbnail, fit: BoxFit.cover),
+                  ),
+                const SizedBox(height: 12),
+                Text(title, style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
+                const SizedBox(height: 10),
+                Text(description, style: const TextStyle(color: Colors.white70)),
+                const SizedBox(height: 16),
+                if (videoUrl != null && videoUrl.isNotEmpty)
+                  Text('Video URL: $videoUrl', style: const TextStyle(color: Colors.white54)),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 }
